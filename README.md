@@ -1,219 +1,146 @@
-# ParkinSense
+# ParkinSense: Four-Channel EEG Classification Baseline
 
-# shrinkage-lda
+## Overview
 
-> A small, robust Linear Discriminant Analysis classifier for binary tabular data —
-> with covariance shrinkage, NaN-safe handling, and coverage-aware metrics.
+ParkinSense is a NYAS Junior Academy team project exploring an affordable, reusable EEG headband concept for potential neurological screening, with agricultural workers as an intended community. This notebook evaluates a narrower question: can features from four awake resting EEG channels distinguish participants already diagnosed with Parkinson's disease (PD) from controls?
 
-[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![NumPy](https://img.shields.io/badge/numpy-%E2%89%A51.20-013243.svg)](https://numpy.org/)
-[![scikit-learn](https://img.shields.io/badge/scikit--learn-%E2%89%A51.0-F7931E.svg)](https://scikit-learn.org/)
+This is an exploratory computational feasibility study. The experiment does not validate early detection, pesticide-related risk, overnight screening, or recordings from the actual headband. It is not a clinical diagnostic tool.
 
----
+## Dataset and cohort
 
-## Why this exists
+- Source: OpenNeuro ds008768, version 1.0.0, *Resting-State EEG in Parkinson's Disease and Healthy Controls*.
+- Dataset: https://openneuro.org/datasets/ds008768/versions/1.0.0
+- NEMAR serving-copy DOI: https://doi.org/10.82901/nemar.on008768
+- Signal download base: https://nemar.s3.us-east-2.amazonaws.com/on008768/zarr/
+- Condition: awake, eyes-open resting EEG.
+- The dataset describes 358 recordings from 312 unique participants; some people have repeated sessions.
+- This analysis uses one first-session recording per selected participant: 267 people, comprising 160 PD participants and 107 controls.
+- Labels: 0 = control, 1 = PD.
 
-`sklearn.discriminant_analysis.LinearDiscriminantAnalysis` is great, but in
-small-`n`, many-`p` settings (biomarkers, omics, clinical cohorts) its pooled
-covariance estimate is unstable and can even be singular. This module keeps the
-LDA idea but adds three pragmatic fixes:
+The participant selection and five fold assignments were reused from the earlier project analysis and are explicitly listed in the notebook. That earlier selection retained the original 500 Hz acquisition group: 36 original 25,000 Hz participants were excluded because all belonged to the PD group, creating an acquisition-rate confound. Nine additional participants failed the earlier quality/duration requirements, leaving 267. The Colab reproduction begins with this fixed cohort; it does not independently repeat that initial cohort-selection audit. All 267 selected participants passed the current four-channel feature-availability checks.
 
-- **Covariance shrinkage** toward a scaled identity — keeps `Σ` well-conditioned.
-- **NaN/inf safety** — invalid rows are dropped at fit time and flagged as
-  unscorable at predict time, instead of crashing or silently biasing results.
-- **Coverage-aware metrics** — `calculate_metrics` reports *how many* samples
-  were actually scorable, not just the accuracy on whatever survived.
+The notebook downloads the dequantized 250 Hz NEMAR serving representation of the original 500 Hz recordings. It does not directly process the original BrainVision files. The download URLs are live and their contents could change; the notebook does not enforce file hashes or pin the remote data to an immutable revision.
 
-The result is a ~90-line, dependency-light classifier you can audit and cite.
+### Dataset attribution
 
----
+Brooke Yeager, Arturo Espinoza, Rachel Cole, Christina Weber, Ergun Uc, James Cavanagh and Nandakumar Narayanan (2026). *Resting-State EEG in Parkinson's Disease and Healthy Controls*, v1.0.0. Dataset authors retain credit for data collection and release. The NEMAR dataset metadata lists CC0; consult the source record for current license and citation details. The team did not collect these EEG recordings.
 
-## Features
+## Channels and features
 
-| | |
+The four signal channels are Fz, C3, Cz and C4. Pz is the source recording reference and is not loaded as a separate signal channel. Ground is separate in the proposed hardware and is not a classifier input. Matching scalp sites does not establish that the physical wearable produces equivalent signals.
+
+For each participant, the notebook:
+
+1. Decodes stored signals into microvolts using the supplied scale and offset.
+2. Divides the full recording into non-overlapping four-second windows, discarding an incomplete trailing window.
+3. Checks each channel's windows independently: all values must be finite, peak-to-peak amplitude must be below 250 microvolts, and standard deviation must exceed 0.5 microvolts.
+4. Requires at least ten accepted windows on each selected channel.
+5. Computes detrended Welch spectra and takes the median spectrum over that channel's accepted windows.
+6. Extracts relative delta (1-4 Hz), theta (4-8 Hz), alpha (8-13 Hz), and beta (13-30 Hz) power, theta/alpha ratio, and alpha peak frequency.
+
+Relative power is normalized by the sum of the four listed bands. Four channels with six features each produce 24 input features per participant. Quality checks reject obvious problems, but do not guarantee removal of all eye, muscle or electrode artifacts. These are candidate statistical features, not established disease-specific diagnostic biomarkers.
+
+## Model and evaluation
+
+The completed notebook uses a custom regularized Linear Discriminant Analysis (LDA) classifier with covariance shrinkage 0.2 and equal class priors. It does not use Random Forest or Logistic Regression for this baseline.
+
+Evaluation uses the five saved participant folds. Each round trains on 213 or 214 people and tests on the remaining 54 or 53. Each participant receives one held-out prediction. Standardization and LDA parameters are fitted using only training participants. IDs, fold numbers and clinical scores are not classifier inputs.
+
+The classification threshold is fixed at 0.5 on sigmoid-transformed LDA scores. These scores are not calibrated probabilities of having PD. There is no threshold tuning in this notebook.
+
+The cohort and folds have supported earlier project development, so these are exploratory internal-validation results rather than a pristine final test. This notebook does not rerun the alternative-electrode search or external-cohort experiments from the earlier project package.
+
+## Results
+
+| Metric | Held-out result |
+|---|---:|
+| Accuracy | 68.5% |
+| Balanced accuracy | 69.3% |
+| Sensitivity | 65.6% |
+| Specificity | 72.9% |
+| ROC AUC | 0.738 |
+| Coverage within selected cohort | 100.0% |
+
+Accuracy is 183 correct predictions out of 267. Balanced accuracy averages sensitivity and specificity, giving the two classes equal importance. Predicting PD for everyone would yield 59.9% accuracy but 50% balanced accuracy. ROC AUC measures ranking across thresholds, not classification accuracy.
+
+### Confusion matrix
+
+| Actual group | Predicted control | Predicted PD |
+|---|---:|---:|
+| Control | 78 | 29 |
+| PD | 55 | 105 |
+
+### Fold results
+
+| Fold | Test participants | Accuracy | Balanced accuracy |
+|---|---:|---:|---:|
+| 1 | 54 | 64.8% | 68.9% |
+| 2 | 54 | 70.4% | 70.7% |
+| 3 | 53 | 66.0% | 65.3% |
+| 4 | 53 | 67.9% | 65.3% |
+| 5 | 53 | 73.6% | 75.7% |
+
+Overall metrics are calculated from the pooled held-out predictions, not by selecting the best fold. Coverage means everyone in the selected cohort received a score, not that every classification was correct.
+
+After evaluation, a separate final LDA model is fitted on all 267 participants for future testing. The reported held-out metrics describe the cross-validation procedure, not an independent evaluation of that final fitted model.
+
+## Files
+
+| File | Purpose |
 |---|---|
-| ✅ Binary LDA with shrinkage | `Σ ← (1−λ)·Σ + λ·(tr Σ / p)·I + εI` |
-| ✅ Per-feature standardization | zero-variance features handled safely |
-| ✅ Non-finite value handling | dropped at fit, returned as `NaN` at predict |
-| ✅ Sigmoid-transformed scores | `score > 0.5` ⇒ class 1 |
-| ✅ Rich metrics | accuracy, balanced accuracy, sens/spec, ROC-AUC, coverage, confusion counts |
-| ✅ No black boxes | plain NumPy + two SciPy/sklearn helpers |
+| `Parkinsense.ipynb` | Executed Colab notebook containing downloading, extraction, training, checks and graphs |
+| `requirements.txt` | Pinned Python package versions; the same installation command is included in the notebook |
+| `cohort.csv` | Selected participant IDs, labels and saved folds |
+| `channel_quality.csv` | Accepted and total four-second windows per participant and channel |
+| `features.csv` | Extracted 24-feature table, with IDs, labels and folds |
+| `held_out_predictions.csv` | Held-out scores and predicted labels for each participant |
+| `fold_metrics.csv` | Performance for each outer fold |
+| `metrics.json` | Overall metrics and confusion counts |
+| `baseline_results.png` | Confusion matrix and ROC curve |
+| `four_channel_lda.joblib` | Final fitted LDA parameter dictionary and configuration |
 
----
+The run also creates `features.npz` and `download_errors.json`. These are reproducible intermediates and need not be included in the submission. Downloaded EEG files are not bundled.
 
-## Installation
+## Run in Google Colab
 
-Clone the repo and import directly (no packaging required):
+1. Open https://colab.research.google.com/ and upload `Parkinsense.ipynb`.
+2. Use a standard CPU runtime; a GPU is not required.
+3. Run the cells in order, starting with package installation. If Colab requests a runtime restart after installation, restart and rerun the import and subsequent cells.
+4. The notebook recreates the cohort, downloads recordings, extracts features, fits the five evaluation models, checks metrics, produces graphs and fits the final model.
+5. Download the output files before ending the session. Data are stored under `/content/ParkinSense_rebuild`, which is temporary. No Google Drive mount is required.
 
-```bash
-git clone https://github.com/<your-user>/shrinkage-lda.git
-cd shrinkage-lda
-```
+A fresh runtime needs internet access and sufficient temporary disk space for the recordings. Downloads may take time. If a download fails, rerun the download cell; completed local recordings are reused. After a runtime reset, temporary downloads and outputs must be regenerated unless separately saved.
 
-**Requirements**
-
-- Python ≥ 3.8
-- `numpy`
-- `scipy` (for `scipy.special.expit`)
-- `scikit-learn` (for `roc_auc_score` only)
-
-```bash
-pip install numpy scipy scikit-learn
-```
-
----
-
-## Quick start
+The final notebook cell downloads the metrics, held-out predictions, fold metrics, graph and fitted model. To download the additional tables, run:
 
 ```python
-import numpy as np
-from sklearn.model_selection import train_test_split
+from google.colab import files
 
-from shrinkage_lda import fit_lda, predict_lda, calculate_metrics
-
-# X: (n_samples, n_features) float array — NaNs allowed
-# y: (n_samples,) int array of 0/1 labels
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.25, stratify=y, random_state=42
-)
-
-model = fit_lda(X_train, y_train, shrinkage=0.2)
-scores = predict_lda(model, X_test)          # scores in [0, 1], NaN = unscorable
-metrics = calculate_metrics(y_test, scores)
-
-print(metrics["balanced_accuracy"], metrics["roc_auc"], metrics["coverage"])
+for name in ["cohort.csv", "channel_quality.csv", "features.csv"]:
+    files.download(str(root / name))
 ```
 
----
+Save the executed notebook through File > Download > Download .ipynb.
 
-## API reference
+To run outside Colab, install `requirements.txt` and adapt the Colab-specific download cells and `/content` path. The notebook is primarily intended for Colab.
 
-### `fit_lda(X_train, y_train, shrinkage=0.2)`
+## Using the saved model
 
-Trains the classifier and returns a model `dict`.
+`four_channel_lda.joblib` contains a dictionary of parameters, not a standalone scikit-learn estimator. Use the notebook's `predict_lda` function with `bundle["estimator"]` after applying the identical feature extraction and channel order. For one feature vector, the input must have shape `(1, 24)`.
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `X_train` | `np.ndarray (n, p)` | — | Feature matrix. Rows with any non-finite value are dropped. |
-| `y_train` | `np.ndarray (n,)` | — | Binary labels: `0` = control, `1` = case. |
-| `shrinkage` | `float ∈ [0, 1]` | `0.2` | Shrinkage strength toward the scaled identity. `0` = off, `1` = fully isotropic. |
+Raw EEG cannot be passed directly to this file. Sampling, units, reference and feature definitions must match. The current preprocessing-quality thresholds are defined in the notebook; not all are duplicated in the saved bundle. Only load joblib files from trusted sources.
 
-**Returns** — `dict` with keys:
+## Limitations and interpretation
 
-| Key | Meaning |
-|---|---|
-| `mean` | Per-feature mean used for standardization |
-| `scale` | Per-feature std (zero-variance features → `1`) |
-| `weights` | Discriminant vector, `Σ⁻¹(μ₁ − μ₀)` |
-| `bias` | Intercept, `−½(μ₀ + μ₁)ᵀw` |
-| `shrinkage` | Value used (for provenance) |
+- These results concern already-diagnosed participants and awake resting recordings. Diagnosed does not mean every participant was late-stage.
+- Sleep, early or prediagnostic detection, pesticide exposure classification and actual-device performance were not tested.
+- The model missed 55 of 160 PD participants and incorrectly flagged 29 of 107 controls. It is not ready to issue medical screening recommendations.
+- Four-channel features, finite sample size, artifacts and cohort differences may limit performance; these experiments do not isolate which factor causes the errors.
+- We have not established that medication explains the accuracy or that increasing channel count will improve it.
+- Current QC starts from a cohort previously filtered using the original channel/duration criteria. Results should not be interpreted as availability or performance in an unselected community sample.
+- The notebook checks arithmetic and participant separation, but does not independently validate the inherited labels, exclusions or clinical diagnoses against source documentation.
+- A new, untouched cohort and recordings from the physical prototype are needed before making broader performance claims.
 
-**Raises** — `ValueError` if either class has < 2 usable samples.
+## AI assistance and team contribution
 
----
-
-### `predict_lda(model, X_test)`
-
-| Parameter | Type | Description |
-|---|---|---|
-| `model` | `dict` | Output of `fit_lda` |
-| `X_test` | `np.ndarray (m, p)` | Test features |
-
-**Returns** — `np.ndarray (m,)` of scores in `[0, 1]`. Rows with non-finite values
-are returned as `np.nan` (not scored).
-
----
-
-### `calculate_metrics(target, scores)`
-
-| Parameter | Type | Description |
-|---|---|---|
-| `target` | `np.ndarray` | Ground-truth `0/1` labels |
-| `scores` | `np.ndarray` | Predicted scores (`NaN` = unscorable) |
-
-**Returns** — `dict`:
-
-| Key | Meaning |
-|---|---|
-| `n` | Total samples |
-| `accuracy` | `(TP+TN)/n` (unscorable counted as errors) |
-| `balanced_accuracy` | `(sensitivity + specificity) / 2` |
-| `sensitivity` | `TP / (TP+FN)` |
-| `specificity` | `TN / (TN+FP)` |
-| `coverage` | Fraction of samples with a valid score |
-| `scorable_accuracy` | Accuracy on scored samples only (or `None`) |
-| `roc_auc` | ROC-AUC on scored samples (or `None` if only one class present) |
-| `tn, fp, fn, tp` | Confusion-matrix counts |
-| `no_result_control` | Control samples that were unscorable |
-| `no_result_pd` | Case samples that were unscorable |
-
----
-
-## How it works
-
-1. **Drop invalid rows.** Any row of `X_train` containing `NaN`/`inf` is removed
-   along with its label. A class-balance check guards against degenerate folds.
-2. **Standardize.** Compute per-feature `mean` and `std`; features with
-   `std < 1e-12` get `scale = 1` so we never divide by zero.
-3. **Estimate the pooled covariance.**
-   `Σ = RᵀR / (n − 2)`, where `R` are residuals around class means.
-4. **Shrink.**
-   `Σ ← (1−λ)·Σ + λ·(tr Σ / p)·I + 1e-8·I`.
-   This is the Ledoit–Wolf-style "shrink to scaled identity" family — simple,
-   fast, and effective when `n` is small relative to `p`.
-5. **Solve for the discriminant.** `w = Σ⁻¹(μ₁ − μ₀)`, `b = −½(μ₀ + μ₁)ᵀw`.
-6. **Score.** `score = σ(xᵀw + b)` via the logistic function.
-
-The logistic transform is monotonic, so **ranking** (and therefore ROC-AUC)
-is unchanged by it — but note the scores are **not calibrated probabilities**.
-
----
-
-## Design notes & caveats
-
-- **Shrinkage matters.** With `shrinkage=0` and correlated features, the
-  covariance can be singular and `np.linalg.solve` will raise. The default
-  `0.2` is a reasonable starting point; tune it on a validation split.
-- **Scores are not calibrated.** `0.5` is a threshold, not a probability.
-  If you need calibration, wrap in isotonic/Platt scaling.
-- **Unscorable ≠ negative.** Use `coverage` and `no_result_*` to report how
-  often the model *could not* produce an answer — especially important in
-  clinical use cases.
-- **Labels must be non-negative integers** (`np.bincount` is used internally).
-- **Binary only.** Multiclass is intentionally out of scope.
-
----
-
-## Suggested repo layout
-
-```
-shrinkage-lda/
-├── README.md
-├── LICENSE
-├── requirements.txt
-├── shrinkage_lda.py        # the three functions above
-└── examples/
-    └── quickstart.py
-```
-
----
-
-## Citation
-
-If this code contributes to a publication, please cite the repository:
-
-```bibtex
-@software{shrinkage_lda,
-  title  = {shrinkage-lda: A robust Linear Discriminant Analysis classifier},
-  author = {<Your Name>},
-  year   = {2025},
-  url    = {https://github.com/<your-user>/shrinkage-lda}
-}
-```
-
----
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+ChatGPT assisted with code generation and adaptation, debugging guidance, interpretation and documentation. The student ran the notebook in Google Colab and inspected its saved results. This package should not be described as code written entirely without assistance. Project decisions, contributions and any additional AI use should be disclosed according to the applicable NYAS submission rules.
